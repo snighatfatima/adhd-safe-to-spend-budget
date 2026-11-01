@@ -1,0 +1,109 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; img-src data:">
+<title>Safe-to-Spend Budget Planner</title>
+<style>
+:root{--bg:#F6F3EE;--card:#fff;--ink:#1F2B27;--sub:#5F6B66;--g:#2F5D50;--gl:#E4EEE9;--c:#B8502F;--cl:#F9E9E3;--line:#E3DCD0}
+*{box-sizing:border-box;margin:0;padding:0;font-family:-apple-system,"Segoe UI",Roboto,Arial,sans-serif}
+body{background:var(--bg);color:var(--ink);padding:14px 14px 90px;display:flex;justify-content:center}
+main{width:100%;max-width:640px;display:flex;flex-direction:column;gap:14px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:16px;padding:18px}
+h1{font-size:1.15rem}h2{font-size:1rem;margin-bottom:10px}.sub{color:var(--sub);font-size:.85rem;line-height:1.4}
+.big{font-size:2.8rem;font-weight:800;color:var(--g);margin:6px 0}.big.neg{color:var(--c)}
+.row{display:flex;gap:8px;flex-wrap:wrap;align-items:center}.row>*{flex:1 1 120px}
+.stat{background:var(--bg);border-radius:12px;padding:10px;font-size:.8rem;color:var(--sub)}.stat b{display:block;color:var(--ink);font-size:1rem}
+label{font-size:.75rem;font-weight:700;color:var(--sub);display:block;margin:8px 0 4px}
+input,select{width:100%;padding:12px;border:1px solid var(--line);border-radius:10px;font-size:1rem;background:#FCFBF9;color:var(--ink)}
+button{min-height:44px;padding:10px 14px;border:0;border-radius:10px;background:var(--g);color:#fff;font-weight:700;font-size:.95rem;cursor:pointer}
+button.alt{background:var(--gl);color:var(--g)}button.warn{background:var(--cl);color:var(--c)}
+button:focus-visible,input:focus-visible,select:focus-visible{outline:3px solid #7FB3A2;outline-offset:2px}
+.item{display:flex;justify-content:space-between;align-items:center;gap:8px;padding:10px 0;border-bottom:1px solid var(--line)}
+.item:last-child{border:0}.item small{display:block;color:var(--sub)}.item button{flex:0 0 auto;min-height:38px;padding:6px 12px}
+.bar{height:10px;background:var(--gl);border-radius:6px;overflow:hidden;margin:4px 0 8px}.bar i{display:block;height:100%;background:var(--g)}
+.ban{padding:12px 14px;border-radius:12px;background:#FFF4D6;border:1px solid #F0D98A;font-size:.85rem;line-height:1.4}
+.ban.red{background:var(--cl);border-color:#E9B8A6}.ban .row{margin-top:8px}
+nav{position:fixed;left:0;right:0;bottom:0;background:#fff;border-top:1px solid var(--line);display:flex;justify-content:center;gap:4px;padding:6px}
+nav button{background:transparent;color:var(--sub);flex:1;max-width:120px;font-size:.8rem;padding:6px 2px}nav button[aria-current=page]{background:var(--gl);color:var(--g)}
+#toast{position:fixed;left:50%;bottom:76px;transform:translateX(-50%);background:#1F2B27;color:#fff;padding:10px 14px;border-radius:12px;display:none;gap:12px;align-items:center;z-index:9}
+#toast button{min-height:34px;padding:4px 12px;background:#fff;color:#1F2B27}
+</style></head><body><main id="app"></main><div id="toast" role="status"></div>
+<script>
+"use strict";
+const K="sts_v2",KP="sts_v2_prev",CATS=["Food","Snacks","Health","Transport","Fun","Home","Other"];
+let S,blocked=false,tab="today",snooze=false,tt;
+const pad=n=>String(n).padStart(2,"0"),uid=()=>Date.now().toString(36)+Math.random().toString(36).slice(2,6);
+const ds=d=>d.getFullYear()+"-"+pad(d.getMonth()+1)+"-"+pad(d.getDate());
+const today=()=>{const d=new Date();return new Date(d.getFullYear(),d.getMonth(),d.getDate())};
+const pd=s=>{const a=s.split("-").map(Number);return new Date(a[0],a[1]-1,a[2])};
+const addD=(d,n)=>new Date(d.getFullYear(),d.getMonth(),d.getDate()+n);
+const dim=(y,m)=>new Date(y,m+1,0).getDate();
+const money=c=>(c<0?"-":"")+S.cur+(Math.abs(c)/100).toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2});
+const cents=v=>{const n=Math.round(parseFloat(v)*100);return isFinite(n)&&n>0&&n<1e11?n:0};
+const blank=()=>({v:2,cur:"$",pay:0,every:14,next:ds(addD(today(),14)),bal:0,goal:0,saved:0,bills:[],led:[],debts:[],last:0,demo:false,migrated:false});
+function h(t,a){const e=document.createElement(t);for(const k in a||{}){const v=a[k];if(k==="class")e.className=v;else if(k.slice(0,2)==="on")e.addEventListener(k.slice(2),v);else if(v!==false&&v!=null)e.setAttribute(k,v)}
+ for(let i=2;i<arguments.length;i++)[].concat(arguments[i]).forEach(x=>e.append(x==null?"":x));return e}
+const sg=k=>{try{return localStorage.getItem(k)}catch(e){blocked=true;return null}};
+function save(){try{const o=localStorage.getItem(K);if(o)localStorage.setItem(KP,o);localStorage.setItem(K,JSON.stringify(S));blocked=false}catch(e){blocked=true}}
+function load(){for(const raw of [sg(K),sg(KP)]){if(raw){try{S=Object.assign(blank(),JSON.parse(raw));return}catch(e){}}}
+ S=blank();const t=sg("adhd_transactions"),b=sg("adhd_base_income");
+ if(t||b){try{S.bal=Math.round((parseFloat(b)||0)*100);JSON.parse(t||"[]").forEach(e=>S.led.push({id:uid(),d:ds(today()),t:e.type==="Income"?"in":"out",a:Math.round((+e.amount||0)*100),n:String(e.desc||""),c:String(e.cat||"Other")}));S.migrated=true;save()}catch(e){}}}
+function calc(){const t=today(),nx=pd(S.next),bal=S.bal+S.led.reduce((s,e)=>s+(e.t==="in"?e.a:-e.a),0);
+ const days=Math.max(1,Math.round((nx-t)/864e5));let res=0;const due=[];
+ S.bills.forEach(b=>{let first=null;[0,1].forEach(i=>{const m=new Date(t.getFullYear(),t.getMonth()+i,1),key=m.getFullYear()+"-"+pad(m.getMonth()+1);
+  const d=new Date(m.getFullYear(),m.getMonth(),Math.min(b.day,dim(m.getFullYear(),m.getMonth())));
+  if(b.paid&&b.paid[key])return;if(!first)first={b:b,d:d,key:key};if(d<nx&&(i===0||d>=t))res+=b.a});if(first)due.push(first)});
+ due.sort((x,y)=>x.d-y.d);
+ const sp=S.led.filter(e=>e.t==="out"&&e.d===ds(t)&&["Bills","Savings","Debt"].indexOf(e.c)<0).reduce((s,e)=>s+e.a,0);
+ const per=Math.floor((bal-res+sp)/days);return{bal:bal,res:res,days:days,per:per,safe:per-sp,due:due,nx:nx}}
+function say(msg,fn){const e=document.getElementById("toast");e.replaceChildren(msg);if(fn)e.append(h("button",{onclick:()=>{fn();e.style.display="none";save();draw()}},"Undo"));e.style.display="flex";clearTimeout(tt);tt=setTimeout(()=>e.style.display="none",6000)}
+function addLed(t,a,c,n){S.led.unshift({id:uid(),d:ds(today()),t:t,a:a,c:c,n:n||""})}
+function bills(){const out=[];if(blocked)out.push(h("div",{class:"ban red"},"Your browser is blocking saving. The app works, but your data will be lost when you close it. Use Settings > Download backup before you leave."));
+ if(S.migrated)out.push(h("div",{class:"ban"},"Your data from the older version was imported. Check your numbers in Settings."));
+ if(S.demo)out.push(h("div",{class:"ban"},"You are looking at sample data. ",h("button",{class:"warn",onclick:()=>{if(confirm("Erase sample data and start fresh?")){S=blank();save();tab="settings";draw()}}},"Clear it and start fresh")));
+ if(S.led.length>=5&&Date.now()-S.last>12096e5)out.push(h("div",{class:"ban"},"It has been a while since your last backup. ",h("button",{class:"alt",onclick:backup},"Download backup")));
+ if(S.pay>0&&pd(S.next)<=today()&&!snooze)out.push(h("div",{class:"ban"},"Payday is here. Did your pay arrive?",h("div",{class:"row"},h("button",{onclick:paid},"Yes, I got paid"),h("button",{class:"alt",onclick:()=>{snooze=true;draw()}},"Not yet"))));return out}
+function paid(){const t=today();addLed("in",S.pay,"Paycheck","Paycheck");let n=pd(S.next);let g=0;while(n<=t&&g++<400)n=S.every===0?new Date(n.getFullYear(),n.getMonth()+1,n.getDate()):addD(n,S.every);S.next=ds(n);snooze=false;save();draw()}
+function backup(){S.last=Date.now();save();const a=h("a",{href:URL.createObjectURL(new Blob([JSON.stringify(S)],{type:"application/json"})),download:"budget-backup-"+ds(today())+".json"});document.body.append(a);a.click();a.remove();draw()}
+function field(l,id,v,type,extra){return[h("label",{for:id},l),h("input",Object.assign({id:id,type:type||"text",value:v},extra||{}))]}
+function dueText(x){const d=Math.round((x.d-today())/864e5);return d<0?"Overdue by "+(-d)+" day(s)":d===0?"Due today":"Due in "+d+" day(s) ("+ds(x.d)+")"}
+function payBill(x){const a=x.b.a;addLed("out",a,"Bills",x.b.n);x.b.paid=x.b.paid||{};x.b.paid[x.key]=S.led[0].id;save();draw()}
+function viewToday(){const c=calc(),neg=c.safe<0,e=[];
+ e.push(h("div",{class:"card"},h("div",{class:"sub"},"Safe to spend today"),h("div",{class:"big"+(neg?" neg":""),"aria-live":"polite"},money(c.safe)),
+  h("div",{class:"sub"},neg?"You are over today's amount. Nothing is broken: just go gently tomorrow.":"This is what is left for today after your upcoming bills are set aside."),
+  h("div",{class:"row",style:"margin-top:12px"},h("div",{class:"stat"},"Money now",h("b",null,money(c.bal))),h("div",{class:"stat"},"Bills set aside",h("b",null,money(c.res))),h("div",{class:"stat"},"Days to payday",h("b",null,String(c.days))))));
+ const amt=h("input",{id:"qa",type:"number",inputmode:"decimal",min:"0",step:"0.01",placeholder:"0.00"}),cat=h("select",{id:"qc","aria-label":"Category"},CATS.map(x=>h("option",null,x))),nt=h("input",{id:"qn",placeholder:"Note (optional)",maxlength:"60"});
+ e.push(h("div",{class:"card"},h("h2",null,"Quick add: I spent..."),h("div",{class:"row"},amt,cat),nt,h("button",{style:"width:100%;margin-top:10px",onclick:()=>{const a=cents(amt.value);if(!a){amt.focus();return}addLed("out",a,cat.value,nt.value.trim());save();draw()}},"Add spending")));
+ e.push(h("div",{class:"card"},h("h2",null,"Next bills"),c.due.length?c.due.slice(0,3).map(x=>h("div",{class:"item"},h("div",null,x.b.n,h("small",null,money(x.b.a)+" - "+dueText(x))),h("button",{onclick:()=>payBill(x)},"Mark paid"))):h("div",{class:"sub"},"No bills yet. Add them in the Bills tab.")));
+ return e}
+function viewBills(){const n=h("input",{id:"bn",placeholder:"e.g. Rent",maxlength:"40"}),a=h("input",{id:"ba",type:"number",inputmode:"decimal",step:"0.01",placeholder:"Amount"}),d=h("input",{id:"bd",type:"number",min:"1",max:"31",placeholder:"Day of month"});const c=calc();
+ return[h("div",{class:"card"},h("h2",null,"Add a monthly bill"),h("label",{for:"bn"},"Name"),n,h("div",{class:"row"},h("div",null,h("label",{for:"ba"},"Amount"),a),h("div",null,h("label",{for:"bd"},"Due day (1-31)"),d)),
+  h("button",{style:"width:100%;margin-top:10px",onclick:()=>{const am=cents(a.value),dy=parseInt(d.value,10);if(!n.value.trim()||!am||!(dy>=1&&dy<=31)){say("Please fill name, amount and a day from 1 to 31.");return}S.bills.push({id:uid(),n:n.value.trim(),a:am,day:dy,paid:{}});save();draw()}},"Save bill")),
+  h("div",{class:"card"},h("h2",null,"Your bills"),S.bills.length?c.due.map(x=>h("div",{class:"item"},h("div",null,x.b.n,h("small",null,money(x.b.a)+" - "+dueText(x))),h("div",{class:"row",style:"flex:0 0 auto"},h("button",{onclick:()=>payBill(x)},"Paid"),h("button",{class:"warn",onclick:()=>{const i=S.bills.indexOf(x.b),b=S.bills.splice(i,1)[0];save();say("Bill deleted.",()=>{S.bills.splice(i,0,b)});draw()}},"Delete")))):h("div",{class:"sub"},"No bills yet."))]}
+function viewSpend(){const t=today(),mk=t.getFullYear()+"-"+pad(t.getMonth()+1),m=S.led.filter(e=>e.t==="out"&&e.d.slice(0,7)===mk&&e.c!=="Savings"),tot=m.reduce((s,e)=>s+e.a,0),by={};m.forEach(e=>by[e.c]=(by[e.c]||0)+e.a);
+ return[h("div",{class:"card"},h("h2",null,"This month: "+money(tot)),Object.keys(by).sort((x,y)=>by[y]-by[x]).map(k=>h("div",null,h("div",{class:"row",style:"justify-content:space-between"},h("span",null,k),h("b",{style:"flex:0 0 auto"},money(by[k]))),h("div",{class:"bar"},h("i",{style:"width:"+Math.round(by[k]/tot*100)+"%"})))),!tot&&h("div",{class:"sub"},"Nothing logged this month yet.")),
+  h("div",{class:"card"},h("h2",null,"Recent"),S.led.slice(0,40).map(e=>h("div",{class:"item"},h("div",null,(e.t==="in"?"+":"")+money(e.a)+" - "+e.c,h("small",null,e.d+(e.n?" - "+e.n:""))),h("button",{class:"warn","aria-label":"Delete entry",onclick:()=>{const i=S.led.indexOf(e);S.led.splice(i,1);save();say("Entry deleted.",()=>{S.led.splice(i,0,e)});draw()}},"Delete"))),!S.led.length&&h("div",{class:"sub"},"No entries yet."))]}
+function viewGoals(){const g=S.goal>0?Math.min(100,Math.round(S.saved/S.goal*100)):0,sa=h("input",{id:"sa",type:"number",inputmode:"decimal",step:"0.01",placeholder:"Amount"}),dn=h("input",{id:"dn",placeholder:"Debt name",maxlength:"40"}),db=h("input",{id:"db",type:"number",step:"0.01",placeholder:"Balance"}),dm=h("input",{id:"dm",type:"number",step:"0.01",placeholder:"Minimum payment"});
+ return[h("div",{class:"card"},h("h2",null,"Emergency fund"),h("div",{class:"sub"},money(S.saved)+" of "+money(S.goal)+" ("+g+"%)"),h("div",{class:"bar"},h("i",{style:"width:"+g+"%"})),h("div",{class:"row"},sa,h("button",{onclick:()=>{const a=cents(sa.value);if(!a)return;S.saved+=a;addLed("out",a,"Savings","Moved to savings");save();draw()}},"Add to savings")),h("div",{class:"sub",style:"margin-top:6px"},"Set your goal in Settings.")),
+  h("div",{class:"card"},h("h2",null,"Debts (smallest first)"),[...S.debts].sort((x,y)=>x.b-y.b).map(d=>{const p=h("input",{type:"number",step:"0.01","aria-label":"Payment for "+d.n,placeholder:"Payment"});return h("div",{class:"item"},h("div",null,d.n,h("small",null,"Left: "+money(d.b)+(d.m?" - Min "+money(d.m):""))),h("div",{class:"row",style:"flex:0 0 190px"},p,h("button",{onclick:()=>{const a=Math.min(cents(p.value),d.b);if(!a)return;d.b-=a;addLed("out",a,"Debt",d.n);save();draw()}},"Pay")))}),!S.debts.length&&h("div",{class:"sub"},"No debts added."),
+  h("label",{for:"dn"},"Add a debt"),dn,h("div",{class:"row"},db,dm),h("button",{style:"width:100%;margin-top:10px",class:"alt",onclick:()=>{const b=cents(db.value);if(!dn.value.trim()||!b)return;S.debts.push({id:uid(),n:dn.value.trim(),b:b,m:cents(dm.value)});save();draw()}},"Save debt"))]}
+function viewSet(){const f=(id)=>document.getElementById(id);
+ const fr=h("select",{id:"se"},[["7","Every week"],["14","Every 2 weeks"],["0","Every month"]].map(o=>h("option",{value:o[0]},o[1])));fr.value=String(S.every);
+ const fi=h("input",{type:"file",accept:".json,application/json",id:"rf","aria-label":"Choose backup file"});
+ fi.addEventListener("change",()=>{const r=new FileReader();r.onload=()=>{try{const o=JSON.parse(r.result);if(o.v!==2||!Array.isArray(o.led)||!Array.isArray(o.bills))throw 0;if(confirm("Replace everything in the app with this backup?")){S=Object.assign(blank(),o);save();say("Backup restored.");draw()}}catch(e){say("That file is not a valid backup.")}};r.readAsText(fi.files[0])});
+ return[h("div",{class:"card"},h("h2",null,"Set up"),field("Currency symbol","sc",S.cur,"text",{maxlength:"3"}),field("Money in your accounts right now","sb",(S.bal/100).toFixed(2),"number",{step:"0.01"}),field("Paycheck amount","sp",(S.pay/100).toFixed(2),"number",{step:"0.01"}),h("label",{for:"se"},"How often are you paid?"),fr,field("Next payday","sn",S.next,"date"),field("Emergency fund goal","sg",(S.goal/100).toFixed(2),"number",{step:"0.01"}),
+  h("button",{style:"width:100%;margin-top:12px",onclick:()=>{const v=id=>parseFloat(f(id).value)||0;S.cur=f("sc").value||"$";const old=S.led.reduce((s,e)=>s+(e.t==="in"?e.a:-e.a),0);S.bal=Math.round(v("sb")*100)-old;S.pay=Math.round(v("sp")*100);S.every=parseInt(f("se").value,10);if(f("sn").value)S.next=f("sn").value;S.goal=Math.round(v("sg")*100);S.migrated=false;save();say("Saved.");tab="today";draw()}},"Save settings")),
+  h("div",{class:"card"},h("h2",null,"Your data and backup"),h("div",{class:"sub"},"Everything is saved only in this browser on this device. Nothing is sent anywhere. If you clear your browser data or switch device, the data does not follow you, so download a backup now and then."),
+   h("div",{class:"row",style:"margin-top:10px"},h("button",{onclick:backup},"Download backup"),h("button",{class:"alt",onclick:()=>{const p=sg(KP);if(p&&confirm("Go back to the version saved just before your last change?")){try{S=Object.assign(blank(),JSON.parse(p));save();draw()}catch(e){}}}},"Undo last save")),
+   h("label",{for:"rf"},"Restore from a backup file"),fi),
+  h("div",{class:"card"},h("h2",null,"More"),h("div",{class:"row"},h("button",{class:"alt",onclick:paid},"I got paid today"),h("button",{class:"alt",onclick:sample},"Load sample data"),h("button",{class:"warn",onclick:()=>{if(confirm("Erase ALL data in this app?")){S=blank();save();draw()}}},"Erase everything")),
+   h("div",{class:"sub",style:"margin-top:12px"},"This planner is a simple budgeting tool, not financial or medical advice."))]}
+function sample(){const t=today();S=blank();S.demo=true;S.pay=240000;S.every=14;S.next=ds(addD(t,6));S.bal=150000;S.goal=100000;S.saved=25000;
+ [["Rent",90000,3],["Phone",4500,8],["Internet",6000,12],["Streaming",1200,5]].forEach(b=>S.bills.push({id:uid(),n:b[0],a:b[1],day:Math.min(28,addD(t,b[2]).getDate()),paid:{}}));
+ S.debts.push({id:uid(),n:"Credit card",b:120000,m:4000});[["Food",5400],["Snacks",650],["Transport",1800]].forEach(x=>{addLed("out",x[1],x[0],"");S.led[0].d=ds(addD(t,-1))});save();tab="today";draw()}
+function draw(){const app=document.getElementById("app");const v={today:viewToday,bills:viewBills,spend:viewSpend,goals:viewGoals,settings:viewSet}[tab]();
+ const first=!S.pay&&!S.bills.length&&!S.led.length&&!S.demo&&tab==="today"?h("div",{class:"card"},h("h1",null,"Welcome"),h("p",{class:"sub",style:"margin:8px 0 12px"},"This app tells you one number: how much you can safely spend today. Try it with sample data, or set up your own."),h("div",{class:"row"},h("button",{onclick:sample},"Try sample data"),h("button",{class:"alt",onclick:()=>{tab="settings";draw()}},"Set up my own"))):null;
+ const nav=h("nav",{"aria-label":"Main"},[["today","Today"],["bills","Bills"],["spend","Spending"],["goals","Goals"],["settings","Settings"]].map(x=>h("button",{"aria-current":tab===x[0]?"page":null,onclick:()=>{tab=x[0];draw();scrollTo(0,0)}},x[1])));
+ const old=document.querySelector("nav");if(old)old.remove();document.body.append(nav);
+ app.replaceChildren(...[h("h1",null,"Safe-to-Spend Planner")].concat(bills(),first?[first]:[],v))}
+load();draw();
+</script></body></html>
